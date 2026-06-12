@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<!--
+  Raffle Checker - single file app for GitHub Pages
+  Setup: put this file in your repo as index.html, then enable
+  Settings > Pages > Deploy from a branch > main / root.
+  Tickets save in the browser's localStorage on each device.
+-->
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="theme-color" content="#11182B" />
+<title>Raffle Checker</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎟️</text></svg>" />
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Bungee&family=Archivo:wght@400;600;700;800&display=swap');
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: #11182B; }
+button { border: none; cursor: pointer; font: inherit; background: none; }
+input { font: inherit; }
+input:focus { outline: 2px solid #FFC53D; outline-offset: 2px; }
+button:focus-visible { outline: 2px solid #FFC53D; outline-offset: 2px; }
+
+/* layout utilities */
+.relative { position: relative; }
+.absolute { position: absolute; }
+.overflow-hidden { overflow: hidden; }
+.min-h-screen { min-height: 100vh; }
+.w-full { width: 100%; }
+.max-w-md { max-width: 28rem; }
+.mx-auto { margin-left: auto; margin-right: auto; }
+.flex { display: flex; }
+.inline-flex { display: inline-flex; }
+.block { display: block; }
+.inline-block { display: inline-block; }
+.flex-1 { flex: 1; }
+.flex-wrap { flex-wrap: wrap; }
+.items-center { align-items: center; }
+.justify-center { justify-content: center; }
+.justify-between { justify-content: space-between; }
+.gap-1h { gap: 6px; }
+.gap-2 { gap: 8px; }
+.text-center { text-align: center; }
+.text-sm { font-size: 14px; }
+.rounded-full { border-radius: 9999px; }
+.rounded-2xl { border-radius: 16px; }
+.rounded-xl { border-radius: 12px; }
+.rounded-lg { border-radius: 8px; }
+.rounded-md { border-radius: 6px; }
+.p-4 { padding: 16px; }
+.p-6 { padding: 24px; }
+.px-1h { padding-left: 6px; padding-right: 6px; }
+.px-3 { padding-left: 12px; padding-right: 12px; }
+.px-4 { padding-left: 16px; padding-right: 16px; }
+.pl-3 { padding-left: 12px; }
+.py-1 { padding-top: 4px; padding-bottom: 4px; }
+.py-3 { padding-top: 12px; padding-bottom: 12px; }
+.py-4 { padding-top: 16px; padding-bottom: 16px; }
+.py-6 { padding-top: 24px; padding-bottom: 24px; }
+.pt-6 { padding-top: 24px; }
+.pb-12 { padding-bottom: 48px; }
+.mt-1 { margin-top: 4px; }
+.mt-2 { margin-top: 8px; }
+.mt-3 { margin-top: 12px; }
+.mt-4 { margin-top: 16px; }
+.mt-5 { margin-top: 20px; }
+.mb-2 { margin-bottom: 8px; }
+.mb-4 { margin-bottom: 16px; }
+.mb-5 { margin-bottom: 20px; }
+
+@keyframes stubPop {
+  0% { transform: scale(0.85) rotate(-1.5deg); opacity: 0; }
+  60% { transform: scale(1.04) rotate(0.5deg); }
+  100% { transform: scale(1) rotate(0deg); opacity: 1; }
+}
+.stub-pop { animation: stubPop 0.3s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .stub-pop { animation: none; }
+}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef } = React;
+
+// ---------- ticket roll colors ----------
+
+const COLORS = [
+  { id: null, name: "No color", bg: "#F6EEDB", fg: "#231A02" },
+  { id: "red", name: "Red", bg: "#E04848", fg: "#FFFFFF" },
+  { id: "orange", name: "Orange", bg: "#F77F00", fg: "#231A02" },
+  { id: "yellow", name: "Yellow", bg: "#F8D346", fg: "#231A02" },
+  { id: "green", name: "Green", bg: "#2BB673", fg: "#FFFFFF" },
+  { id: "blue", name: "Blue", bg: "#2D6CDF", fg: "#FFFFFF" },
+  { id: "purple", name: "Purple", bg: "#8B5CF6", fg: "#FFFFFF" },
+  { id: "pink", name: "Pink", bg: "#F273B6", fg: "#231A02" },
+  { id: "white", name: "White", bg: "#FFFFFF", fg: "#231A02" },
+];
+
+const colorOf = (id) => COLORS.find((c) => c.id === id) || COLORS[0];
+
+// ---------- helpers ----------
+
+const normalize = (raw) => {
+  const t = String(raw).trim().toUpperCase();
+  if (!t) return null;
+  if (/^\d+$/.test(t)) return String(parseInt(t, 10));
+  if (/^[A-Z0-9-]+$/.test(t)) return t;
+  return null;
+};
+
+const parseTicketInput = (raw) => {
+  const tokens = raw.split(/[\s,;]+/).filter(Boolean);
+  const nums = [];
+  const errors = [];
+  for (const tok of tokens) {
+    const range = tok.match(/^(\d+)-(\d+)$/);
+    if (range) {
+      let a = parseInt(range[1], 10);
+      let b = parseInt(range[2], 10);
+      if (a > b) { const tmp = a; a = b; b = tmp; }
+      if (b - a > 5000) {
+        errors.push(tok + " (range too large)");
+        continue;
+      }
+      for (let i = a; i <= b; i++) nums.push(String(i));
+    } else {
+      const n = normalize(tok);
+      if (n) nums.push(n);
+      else errors.push(tok);
+    }
+  }
+  return { nums, errors };
+};
+
+const keyOf = (t) => (t.c == null ? "none" : t.c) + "|" + t.n;
+
+// group consecutive numbers within each color
+const groupTickets = (tickets) => {
+  const byColor = {};
+  for (const t of tickets) {
+    const k = t.c == null ? "none" : t.c;
+    if (!byColor[k]) byColor[k] = [];
+    byColor[k].push(t.n);
+  }
+  const groups = [];
+  for (const colorDef of COLORS) {
+    const k = colorDef.id == null ? "none" : colorDef.id;
+    const list = byColor[k];
+    if (!list) continue;
+    const numeric = list
+      .filter((n) => /^\d+$/.test(n))
+      .map(Number)
+      .sort((a, b) => a - b);
+    const alpha = list.filter((n) => !/^\d+$/.test(n)).sort();
+    let start = null;
+    let prev = null;
+    const push = () => {
+      if (start === null) return;
+      groups.push(
+        start === prev
+          ? { type: "single", value: String(start), c: colorDef.id }
+          : { type: "range", from: start, to: prev, c: colorDef.id }
+      );
+    };
+    for (const n of numeric) {
+      if (start === null) { start = n; prev = n; continue; }
+      if (n === prev + 1) { prev = n; continue; }
+      push();
+      start = n;
+      prev = n;
+    }
+    push();
+    for (const a of alpha) groups.push({ type: "single", value: a, c: colorDef.id });
+  }
+  return groups;
+};
+
+// ---------- palette ----------
+
+const C = {
+  bg: "#11182B",
+  panel: "#1B2335",
+  panelEdge: "#28324B",
+  cream: "#F6EEDB",
+  red: "#D7263D",
+  gold: "#FFC53D",
+  muted: "#8A93A8",
+  miss: "#2A3349",
+};
+
+const STORAGE_KEY = "raffle-checker-data";
+
+const loadSaved = () => {
+  try {
+    const v = localStorage.getItem(STORAGE_KEY);
+    if (!v) return null;
+    const d = JSON.parse(v);
+    let t = Array.isArray(d.tickets) ? d.tickets : [];
+    if (t.length && typeof t[0] === "string") t = t.map((n) => ({ n, c: null }));
+    let w = Array.isArray(d.winners) ? d.winners : [];
+    if (w.length && typeof w[0] === "string") w = w.map((n) => ({ n, c: null }));
+    let h = Array.isArray(d.history) ? d.history : [];
+    h = h.map((x) => (x.color === undefined ? Object.assign({}, x, { color: null }) : x));
+    return { tickets: t, winners: w, history: h };
+  } catch (e) {
+    return null;
+  }
+};
+
+// ---------- color picker ----------
+
+function ColorPicker({ value, onChange, label }) {
+  return (
+    <div>
+      <div
+        style={{
+          fontFamily: "'Archivo', sans-serif",
+          fontWeight: 700,
+          color: C.muted,
+          fontSize: "12px",
+          letterSpacing: "1px",
+          textTransform: "uppercase",
+        }}
+      >
+        {label}
+      </div>
+      <div className="flex flex-wrap gap-2 mt-2">
+        {COLORS.map((c) => {
+          const selected = value === c.id;
+          return (
+            <button
+              key={c.id == null ? "none" : c.id}
+              onClick={() => onChange(c.id)}
+              aria-label={c.name}
+              aria-pressed={selected}
+              className="rounded-full"
+              style={{
+                width: 34,
+                height: 34,
+                background: c.bg,
+                border: c.id == null ? "2px dashed #9a917c" : "2px solid rgba(0,0,0,0.25)",
+                boxShadow: selected ? "0 0 0 3px " + C.bg + ", 0 0 0 6px " + C.gold : "none",
+                transition: "box-shadow 0.15s",
+              }}
+            />
+          );
+        })}
+      </div>
+      <div
+        className="mt-1"
+        style={{ fontFamily: "'Archivo', sans-serif", color: C.cream, fontSize: "13px", fontWeight: 600 }}
+      >
+        {colorOf(value).name}
+      </div>
+    </div>
+  );
+}
+
+// ---------- ticket stub result ----------
+
+function ResultStub({ result }) {
+  if (!result) {
+    return (
+      <div
+        className="rounded-2xl p-6 text-center"
+        style={{
+          background: C.panel,
+          border: "2px dashed " + C.panelEdge,
+          color: C.muted,
+          fontFamily: "'Archivo', sans-serif",
+        }}
+      >
+        Pick the color being called, type the number, hit Check.
+      </div>
+    );
+  }
+
+  const hit = result.hit;
+  const callColor = colorOf(result.color);
+  const bg = hit ? C.gold : C.miss;
+  const fg = hit ? "#231A02" : C.muted;
+  const label = hit ? "WINNER!" : "NOT YOURS";
+
+  return (
+    <div
+      key={result.id}
+      className="relative overflow-hidden rounded-2xl flex stub-pop"
+      style={{ background: bg, boxShadow: hit ? "0 0 40px rgba(255,197,61,0.35)" : "none" }}
+    >
+      <div
+        className="flex items-center justify-center px-3 py-6"
+        style={{ borderRight: "3px dashed " + (hit ? "rgba(35,26,2,0.4)" : "rgba(17,24,43,0.8)") }}
+      >
+        <span
+          style={{
+            fontFamily: "'Bungee', sans-serif",
+            color: fg,
+            fontSize: "11px",
+            writingMode: "vertical-rl",
+            transform: "rotate(180deg)",
+            letterSpacing: "2px",
+            opacity: 0.7,
+          }}
+        >
+          RAFFLE
+        </span>
+      </div>
+      <div
+        className="absolute rounded-full"
+        style={{ width: 22, height: 22, background: C.bg, left: 38, top: -11 }}
+      />
+      <div
+        className="absolute rounded-full"
+        style={{ width: 22, height: 22, background: C.bg, left: 38, bottom: -11 }}
+      />
+      <div className="flex-1 py-6 px-4 text-center">
+        <div
+          style={{
+            fontFamily: "'Bungee', sans-serif",
+            color: fg,
+            fontSize: hit ? "34px" : "24px",
+            lineHeight: 1.1,
+          }}
+        >
+          {label}
+        </div>
+        <div className="flex items-center justify-center gap-2 mt-1">
+          <span
+            className="rounded-full inline-block"
+            style={{
+              width: 16,
+              height: 16,
+              background: callColor.bg,
+              border: result.color == null ? "2px dashed #9a917c" : "2px solid rgba(0,0,0,0.25)",
+            }}
+          />
+          <span
+            style={{
+              fontFamily: "'Archivo', sans-serif",
+              fontWeight: 800,
+              fontVariantNumeric: "tabular-nums",
+              color: fg,
+              fontSize: "28px",
+            }}
+          >
+            {callColor.name.toUpperCase()} #{result.num}
+          </span>
+        </div>
+        <div
+          style={{
+            fontFamily: "'Archivo', sans-serif",
+            color: fg,
+            opacity: 0.75,
+            fontSize: "13px",
+            marginTop: "2px",
+          }}
+        >
+          {hit ? "You hold this ticket" : "Not in your tickets"}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- small ticket chip ----------
+
+function TicketChip({ colorId, text, onRemove, extra }) {
+  const c = colorOf(colorId);
+  return (
+    <span
+      className="rounded-lg pl-3 py-1 inline-flex items-center gap-1h"
+      style={{
+        paddingRight: onRemove ? 4 : 12,
+        background: c.bg,
+        color: c.fg,
+        border: colorId == null ? "1px dashed #9a917c" : "1px solid rgba(0,0,0,0.2)",
+        fontFamily: "'Archivo', sans-serif",
+        fontWeight: 700,
+        fontVariantNumeric: "tabular-nums",
+        fontSize: "14px",
+      }}
+    >
+      {text}
+      {extra && <span style={{ fontWeight: 600, fontSize: "11px", opacity: 0.6 }}>{extra}</span>}
+      {onRemove && (
+        <button
+          onClick={onRemove}
+          aria-label={"Remove " + text}
+          className="rounded-md px-1h"
+          style={{ color: c.fg, fontWeight: 800, fontSize: "14px", opacity: 0.7 }}
+        >
+          ✕
+        </button>
+      )}
+    </span>
+  );
+}
+
+// ---------- main app ----------
+
+function RaffleChecker() {
+  const saved = useRef(loadSaved()).current;
+  const [tab, setTab] = useState(saved && saved.tickets.length > 0 ? "check" : "tickets");
+  const [tickets, setTickets] = useState(saved ? saved.tickets : []);
+  const [winners, setWinners] = useState(saved ? saved.winners : []);
+  const [history, setHistory] = useState(saved ? saved.history : []);
+  const [addInput, setAddInput] = useState("");
+  const [addColor, setAddColor] = useState(null);
+  const [addMsg, setAddMsg] = useState(null);
+  const [checkInput, setCheckInput] = useState("");
+  const [checkColor, setCheckColor] = useState(null);
+  const [result, setResult] = useState(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const checkRef = useRef(null);
+
+  // save on change
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ tickets, winners, history }));
+    } catch (e) {
+      console.error("Save failed", e);
+    }
+  }, [tickets, winners, history]);
+
+  const addTickets = () => {
+    const { nums, errors } = parseTicketInput(addInput);
+    if (nums.length === 0 && errors.length === 0) return;
+    const existing = new Set(tickets.map(keyOf));
+    let added = 0;
+    const next = tickets.slice();
+    for (const n of nums) {
+      const t = { n, c: addColor };
+      if (!existing.has(keyOf(t))) {
+        existing.add(keyOf(t));
+        next.push(t);
+        added++;
+      }
+    }
+    setTickets(next);
+    setAddInput("");
+    const parts = [];
+    if (added > 0)
+      parts.push(
+        "Added " + added + " " + colorOf(addColor).name.toLowerCase() + " ticket" + (added === 1 ? "" : "s")
+      );
+    if (nums.length - added > 0) parts.push(nums.length - added + " duplicate(s) skipped");
+    if (errors.length > 0) parts.push("Could not read: " + errors.join(", "));
+    setAddMsg(parts.join(". "));
+  };
+
+  const removeGroup = (g) => {
+    if (g.type === "single") {
+      setTickets(tickets.filter((t) => !(t.n === g.value && t.c === g.c)));
+    } else {
+      const toRemove = new Set();
+      for (let i = g.from; i <= g.to; i++) toRemove.add(String(i));
+      setTickets(tickets.filter((t) => !(t.c === g.c && toRemove.has(t.n))));
+    }
+  };
+
+  const clearAll = () => {
+    setTickets([]);
+    setWinners([]);
+    setHistory([]);
+    setResult(null);
+    setConfirmClear(false);
+  };
+
+  // "No color" on either side matches any color
+  const matchTicket = (num, color) =>
+    tickets.find(
+      (t) => t.n === num && (t.c === color || t.c == null || color == null)
+    );
+
+  const runCheck = () => {
+    const n = normalize(checkInput);
+    if (!n) return;
+    const match = matchTicket(n, checkColor);
+    const hit = !!match;
+    const entry = { num: n, color: checkColor, hit, id: Date.now() };
+    setResult(entry);
+    setHistory((h) => [entry].concat(h).slice(0, 300));
+    if (hit) {
+      setWinners((w) =>
+        w.some((x) => keyOf(x) === keyOf(match)) ? w : [match].concat(w)
+      );
+    }
+    setCheckInput("");
+    if (checkRef.current) checkRef.current.focus();
+  };
+
+  const groups = groupTickets(tickets);
+  const winCount = winners.length;
+
+  const tabBtn = (id, label) => (
+    <button
+      onClick={() => setTab(id)}
+      className="flex-1 py-3 rounded-xl text-sm"
+      style={{
+        fontFamily: "'Bungee', sans-serif",
+        fontSize: "12px",
+        letterSpacing: "1px",
+        background: tab === id ? C.red : "transparent",
+        color: tab === id ? C.cream : C.muted,
+        border: tab === id ? "1px solid " + C.red : "1px solid " + C.panelEdge,
+        transition: "all 0.15s",
+      }}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="min-h-screen w-full" style={{ background: C.bg }}>
+      <div className="max-w-md mx-auto px-4 pb-12 pt-6">
+        {/* header */}
+        <div className="text-center mb-5">
+          <div
+            style={{
+              fontFamily: "'Bungee', sans-serif",
+              color: C.cream,
+              fontSize: "26px",
+              lineHeight: 1.1,
+            }}
+          >
+            RAFFLE <span style={{ color: C.gold }}>CHECKER</span>
+          </div>
+          <div
+            style={{
+              fontFamily: "'Archivo', sans-serif",
+              color: C.muted,
+              fontSize: "13px",
+              marginTop: "4px",
+            }}
+          >
+            {tickets.length} ticket{tickets.length === 1 ? "" : "s"} loaded
+            {winCount > 0 ? " \u00B7 " + winCount + " win" + (winCount === 1 ? "" : "s") : ""}
+          </div>
+        </div>
+
+        {/* tabs */}
+        <div className="flex gap-2 mb-5">
+          {tabBtn("check", "CHECK CALLS")}
+          {tabBtn("tickets", "MY TICKETS")}
+        </div>
+
+        {/* ---------- CHECK TAB ---------- */}
+        {tab === "check" && (
+          <div>
+            <div
+              className="rounded-2xl p-4 mb-4"
+              style={{ background: C.panel, border: "1px solid " + C.panelEdge }}
+            >
+              <ColorPicker value={checkColor} onChange={setCheckColor} label="Color being called" />
+
+              <label
+                htmlFor="check-input"
+                className="block mt-4"
+                style={{
+                  fontFamily: "'Archivo', sans-serif",
+                  fontWeight: 700,
+                  color: C.muted,
+                  fontSize: "12px",
+                  letterSpacing: "1px",
+                  textTransform: "uppercase",
+                }}
+              >
+                Number being called
+              </label>
+              <input
+                id="check-input"
+                ref={checkRef}
+                inputMode="numeric"
+                value={checkInput}
+                onChange={(e) => setCheckInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") runCheck();
+                }}
+                placeholder="0000"
+                className="w-full mt-2 rounded-xl text-center"
+                style={{
+                  fontFamily: "'Archivo', sans-serif",
+                  fontWeight: 800,
+                  fontVariantNumeric: "tabular-nums",
+                  fontSize: "40px",
+                  padding: "10px",
+                  background: C.bg,
+                  color: C.cream,
+                  border: "1px solid " + C.panelEdge,
+                }}
+              />
+              <button
+                onClick={runCheck}
+                disabled={tickets.length === 0}
+                className="w-full mt-3 rounded-xl py-4"
+                style={{
+                  fontFamily: "'Bungee', sans-serif",
+                  fontSize: "16px",
+                  letterSpacing: "1px",
+                  background: tickets.length === 0 ? C.miss : C.red,
+                  color: tickets.length === 0 ? C.muted : C.cream,
+                }}
+              >
+                CHECK
+              </button>
+              {tickets.length === 0 && (
+                <div
+                  className="text-center mt-2"
+                  style={{ fontFamily: "'Archivo', sans-serif", color: C.muted, fontSize: "13px" }}
+                >
+                  Add your tickets first in the My Tickets tab.
+                </div>
+              )}
+            </div>
+
+            <ResultStub result={result} />
+
+            {/* winners */}
+            {winners.length > 0 && (
+              <div className="mt-5">
+                <div
+                  style={{
+                    fontFamily: "'Bungee', sans-serif",
+                    color: C.gold,
+                    fontSize: "13px",
+                    letterSpacing: "1px",
+                    marginBottom: "8px",
+                  }}
+                >
+                  YOUR WINNING TICKETS
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {winners.map((w) => (
+                    <span
+                      key={keyOf(w)}
+                      className="rounded-lg px-3 py-1 inline-flex items-center gap-2"
+                      style={{
+                        background: C.gold,
+                        color: "#231A02",
+                        fontFamily: "'Archivo', sans-serif",
+                        fontWeight: 800,
+                        fontVariantNumeric: "tabular-nums",
+                        fontSize: "15px",
+                      }}
+                    >
+                      <span
+                        className="rounded-full inline-block"
+                        style={{
+                          width: 12,
+                          height: 12,
+                          background: colorOf(w.c).bg,
+                          border: w.c == null ? "1px dashed #9a917c" : "1px solid rgba(0,0,0,0.25)",
+                        }}
+                      />
+                      #{w.n}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* history */}
+            {history.length > 0 && (
+              <div className="mt-5">
+                <div
+                  style={{
+                    fontFamily: "'Bungee', sans-serif",
+                    color: C.muted,
+                    fontSize: "13px",
+                    letterSpacing: "1px",
+                    marginBottom: "8px",
+                  }}
+                >
+                  CALLED SO FAR ({history.length})
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {history.slice(0, 40).map((h) => (
+                    <span
+                      key={h.id}
+                      className="rounded-lg px-3 py-1 inline-flex items-center gap-1h"
+                      style={{
+                        background: h.hit ? C.gold : C.panel,
+                        color: h.hit ? "#231A02" : C.muted,
+                        border: "1px solid " + (h.hit ? C.gold : C.panelEdge),
+                        fontFamily: "'Archivo', sans-serif",
+                        fontWeight: 700,
+                        fontVariantNumeric: "tabular-nums",
+                        fontSize: "14px",
+                      }}
+                    >
+                      <span
+                        className="rounded-full inline-block"
+                        style={{
+                          width: 10,
+                          height: 10,
+                          background: colorOf(h.color).bg,
+                          border: h.color == null ? "1px dashed #9a917c" : "1px solid rgba(0,0,0,0.25)",
+                        }}
+                      />
+                      {h.num}
+                    </span>
+                  ))}
+                  {history.length > 40 && (
+                    <span
+                      style={{
+                        color: C.muted,
+                        fontFamily: "'Archivo', sans-serif",
+                        fontSize: "13px",
+                        alignSelf: "center",
+                      }}
+                    >
+                      +{history.length - 40} more
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ---------- TICKETS TAB ---------- */}
+        {tab === "tickets" && (
+          <div>
+            <div
+              className="rounded-2xl p-4"
+              style={{ background: C.panel, border: "1px solid " + C.panelEdge }}
+            >
+              <ColorPicker value={addColor} onChange={setAddColor} label="Ticket color" />
+
+              <label
+                htmlFor="add-input"
+                className="block mt-4"
+                style={{
+                  fontFamily: "'Archivo', sans-serif",
+                  fontWeight: 700,
+                  color: C.muted,
+                  fontSize: "12px",
+                  letterSpacing: "1px",
+                  textTransform: "uppercase",
+                }}
+              >
+                Ticket numbers
+              </label>
+              <input
+                id="add-input"
+                value={addInput}
+                onChange={(e) => setAddInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") addTickets();
+                }}
+                placeholder="e.g. 4501-4550, 88, 1203"
+                className="w-full mt-2 rounded-xl"
+                style={{
+                  fontFamily: "'Archivo', sans-serif",
+                  fontWeight: 600,
+                  fontSize: "17px",
+                  padding: "14px",
+                  background: C.bg,
+                  color: C.cream,
+                  border: "1px solid " + C.panelEdge,
+                }}
+              />
+              <div
+                className="mt-2"
+                style={{ fontFamily: "'Archivo', sans-serif", color: C.muted, fontSize: "13px" }}
+              >
+                Mix ranges and single numbers, separated by commas or spaces. Pick the roll color above first.
+              </div>
+              <button
+                onClick={addTickets}
+                className="w-full mt-3 rounded-xl py-3"
+                style={{
+                  fontFamily: "'Bungee', sans-serif",
+                  fontSize: "14px",
+                  letterSpacing: "1px",
+                  background: C.red,
+                  color: C.cream,
+                }}
+              >
+                ADD TO MY TICKETS
+              </button>
+              {addMsg && (
+                <div
+                  className="mt-2 text-center"
+                  style={{ fontFamily: "'Archivo', sans-serif", color: C.gold, fontSize: "13px" }}
+                >
+                  {addMsg}
+                </div>
+              )}
+            </div>
+
+            {/* ticket list */}
+            <div className="mt-5">
+              <div className="flex items-center justify-between mb-2">
+                <div
+                  style={{
+                    fontFamily: "'Bungee', sans-serif",
+                    color: C.muted,
+                    fontSize: "13px",
+                    letterSpacing: "1px",
+                  }}
+                >
+                  MY TICKETS ({tickets.length})
+                </div>
+                {tickets.length > 0 && (
+                  <button
+                    onClick={() => (confirmClear ? clearAll() : setConfirmClear(true))}
+                    onBlur={() => setConfirmClear(false)}
+                    className="rounded-lg px-3 py-1"
+                    style={{
+                      fontFamily: "'Archivo', sans-serif",
+                      fontWeight: 700,
+                      fontSize: "12px",
+                      background: confirmClear ? C.red : "transparent",
+                      color: confirmClear ? C.cream : C.muted,
+                      border: "1px solid " + (confirmClear ? C.red : C.panelEdge),
+                    }}
+                  >
+                    {confirmClear ? "Tap again to clear all" : "Clear all"}
+                  </button>
+                )}
+              </div>
+
+              {tickets.length === 0 ? (
+                <div
+                  className="rounded-2xl p-6 text-center"
+                  style={{
+                    background: C.panel,
+                    border: "2px dashed " + C.panelEdge,
+                    color: C.muted,
+                    fontFamily: "'Archivo', sans-serif",
+                  }}
+                >
+                  No tickets yet. Pick a color, add your numbers above, and they save on this
+                  device for raffle night.
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {groups.map((g, i) => {
+                    const label = g.type === "range" ? g.from + "-" + g.to : "#" + g.value;
+                    const count = g.type === "range" ? g.to - g.from + 1 : 1;
+                    return (
+                      <TicketChip
+                        key={i}
+                        colorId={g.c}
+                        text={label}
+                        extra={count > 1 ? "(" + count + ")" : null}
+                        onRemove={() => removeGroup(g)}
+                      />
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<RaffleChecker />);
+</script>
+</body>
+</html>
