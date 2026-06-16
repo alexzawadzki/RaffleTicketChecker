@@ -197,22 +197,35 @@ const C = {
 
 const STORAGE_KEY = "raffle-checker-data";
 
+// accept any saved/imported blob and coerce it into the current shape,
+// applying backward-compat migrations (old string arrays, missing color).
+const normalizeState = (d) => {
+  if (!d || typeof d !== "object") throw new Error("not an object");
+  let t = Array.isArray(d.tickets) ? d.tickets : [];
+  if (t.length && typeof t[0] === "string") t = t.map((n) => ({ n, c: null }));
+  let w = Array.isArray(d.winners) ? d.winners : [];
+  if (w.length && typeof w[0] === "string") w = w.map((n) => ({ n, c: null }));
+  let h = Array.isArray(d.history) ? d.history : [];
+  h = h.map((x) => (x.color === undefined ? Object.assign({}, x, { color: null }) : x));
+  return { tickets: t, winners: w, history: h };
+};
+
 const loadSaved = () => {
   try {
     const v = localStorage.getItem(STORAGE_KEY);
     if (!v) return null;
-    const d = JSON.parse(v);
-    let t = Array.isArray(d.tickets) ? d.tickets : [];
-    if (t.length && typeof t[0] === "string") t = t.map((n) => ({ n, c: null }));
-    let w = Array.isArray(d.winners) ? d.winners : [];
-    if (w.length && typeof w[0] === "string") w = w.map((n) => ({ n, c: null }));
-    let h = Array.isArray(d.history) ? d.history : [];
-    h = h.map((x) => (x.color === undefined ? Object.assign({}, x, { color: null }) : x));
-    return { tickets: t, winners: w, history: h };
+    return normalizeState(JSON.parse(v));
   } catch (e) {
     return null;
   }
 };
+
+// backup code: JSON -> base64. All ticket data is ASCII (see normalize),
+// so plain btoa/atob is safe and keeps the code copy-pasteable anywhere.
+const encodeBackup = (state) =>
+  btoa(JSON.stringify({ tickets: state.tickets, winners: state.winners, history: state.history }));
+
+const decodeBackup = (code) => normalizeState(JSON.parse(atob(String(code).trim())));
 
 // ---------- color picker ----------
 
@@ -418,6 +431,9 @@ function RaffleChecker() {
   const [checkColor, setCheckColor] = useState(null);
   const [result, setResult] = useState(null);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [backupCode, setBackupCode] = useState("");
+  const [restoreInput, setRestoreInput] = useState("");
+  const [backupMsg, setBackupMsg] = useState(null);
   const checkRef = useRef(null);
 
   // save on change
@@ -471,6 +487,35 @@ function RaffleChecker() {
     setHistory([]);
     setResult(null);
     setConfirmClear(false);
+  };
+
+  // reveal the backup code and try to copy it to the clipboard
+  const makeBackup = async () => {
+    const code = encodeBackup({ tickets, winners, history });
+    setBackupCode(code);
+    try {
+      await navigator.clipboard.writeText(code);
+      setBackupMsg("Copied! Paste it into Notes or text it to yourself so you can't lose it.");
+    } catch (e) {
+      setBackupMsg("Select the code below and copy it, then save it somewhere safe.");
+    }
+  };
+
+  const restoreBackup = () => {
+    if (!restoreInput.trim()) return;
+    try {
+      const s = decodeBackup(restoreInput);
+      setTickets(s.tickets);
+      setWinners(s.winners);
+      setHistory(s.history);
+      setResult(null);
+      setRestoreInput("");
+      setBackupMsg(
+        "Restored " + s.tickets.length + " ticket" + (s.tickets.length === 1 ? "" : "s") + "."
+      );
+    } catch (e) {
+      setBackupMsg("That code didn't look right — make sure you pasted the whole thing.");
+    }
   };
 
   // "No color" on either side matches any color
@@ -858,6 +903,118 @@ function RaffleChecker() {
                   })}
                 </div>
               )}
+            </div>
+
+            {/* backup & restore (no account, stored as a copy-paste code) */}
+            <div className="mt-5">
+              <div
+                style={{
+                  fontFamily: "'Bungee', sans-serif",
+                  color: C.muted,
+                  fontSize: "13px",
+                  letterSpacing: "1px",
+                  marginBottom: "8px",
+                }}
+              >
+                BACKUP &amp; RESTORE
+              </div>
+              <div
+                className="rounded-2xl p-4"
+                style={{ background: C.panel, border: "1px solid " + C.panelEdge }}
+              >
+                <div
+                  style={{ fontFamily: "'Archivo', sans-serif", color: C.muted, fontSize: "13px" }}
+                >
+                  Your tickets save on this device only. Copy a backup code and keep it somewhere
+                  safe so you can restore them if this browser clears its data.
+                </div>
+                <button
+                  onClick={makeBackup}
+                  disabled={tickets.length === 0}
+                  className="w-full mt-3 rounded-xl py-3"
+                  style={{
+                    fontFamily: "'Bungee', sans-serif",
+                    fontSize: "13px",
+                    letterSpacing: "1px",
+                    background: tickets.length === 0 ? C.miss : C.red,
+                    color: tickets.length === 0 ? C.muted : C.cream,
+                  }}
+                >
+                  COPY BACKUP CODE
+                </button>
+                {backupCode && (
+                  <textarea
+                    readOnly
+                    value={backupCode}
+                    onFocus={(e) => e.target.select()}
+                    rows={3}
+                    className="w-full mt-3 rounded-xl"
+                    style={{
+                      fontFamily: "monospace",
+                      fontSize: "12px",
+                      padding: "10px",
+                      background: C.bg,
+                      color: C.cream,
+                      border: "1px solid " + C.panelEdge,
+                      resize: "none",
+                      wordBreak: "break-all",
+                    }}
+                  />
+                )}
+
+                <div
+                  className="mt-4"
+                  style={{
+                    fontFamily: "'Archivo', sans-serif",
+                    fontWeight: 700,
+                    color: C.muted,
+                    fontSize: "12px",
+                    letterSpacing: "1px",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  Restore from a code
+                </div>
+                <textarea
+                  value={restoreInput}
+                  onChange={(e) => setRestoreInput(e.target.value)}
+                  placeholder="Paste a backup code here"
+                  rows={2}
+                  className="w-full mt-2 rounded-xl"
+                  style={{
+                    fontFamily: "monospace",
+                    fontSize: "12px",
+                    padding: "10px",
+                    background: C.bg,
+                    color: C.cream,
+                    border: "1px solid " + C.panelEdge,
+                    resize: "none",
+                    wordBreak: "break-all",
+                  }}
+                />
+                <button
+                  onClick={restoreBackup}
+                  disabled={!restoreInput.trim()}
+                  className="w-full mt-2 rounded-xl py-3"
+                  style={{
+                    fontFamily: "'Bungee', sans-serif",
+                    fontSize: "13px",
+                    letterSpacing: "1px",
+                    background: !restoreInput.trim() ? C.miss : C.panelEdge,
+                    color: !restoreInput.trim() ? C.muted : C.cream,
+                  }}
+                >
+                  RESTORE
+                </button>
+                {backupMsg && (
+                  <div
+                    className="mt-2 text-center"
+                    style={{ fontFamily: "'Archivo', sans-serif", color: C.gold, fontSize: "13px" }}
+                  >
+                    {backupMsg}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
