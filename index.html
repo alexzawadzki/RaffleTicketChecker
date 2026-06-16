@@ -200,17 +200,30 @@ const C = {
 
 const STORAGE_KEY = "raffle-checker-data";
 
-// accept any saved/imported blob and coerce it into the current shape,
-// applying backward-compat migrations (old string arrays, missing color).
+// coerce a ticket/winner array into {n, c} objects (old saves used strings)
+const coerceTickets = (arr) => {
+  let t = Array.isArray(arr) ? arr : [];
+  if (t.length && typeof t[0] === "string") t = t.map((n) => ({ n, c: null }));
+  return t;
+};
+// coerce a history array, backfilling the color field added in a later version
+const coerceHistory = (arr) =>
+  (Array.isArray(arr) ? arr : []).map((x) =>
+    x.color === undefined ? Object.assign({}, x, { color: null }) : x
+  );
+
+// accept any saved/imported blob and coerce it into the current shape.
+// 50/50 fields default to empty so saves/backups from before 50/50 still load.
 const normalizeState = (d) => {
   if (!d || typeof d !== "object") throw new Error("not an object");
-  let t = Array.isArray(d.tickets) ? d.tickets : [];
-  if (t.length && typeof t[0] === "string") t = t.map((n) => ({ n, c: null }));
-  let w = Array.isArray(d.winners) ? d.winners : [];
-  if (w.length && typeof w[0] === "string") w = w.map((n) => ({ n, c: null }));
-  let h = Array.isArray(d.history) ? d.history : [];
-  h = h.map((x) => (x.color === undefined ? Object.assign({}, x, { color: null }) : x));
-  return { tickets: t, winners: w, history: h };
+  return {
+    tickets: coerceTickets(d.tickets),
+    winners: coerceTickets(d.winners),
+    history: coerceHistory(d.history),
+    fiftyTickets: coerceTickets(d.fiftyTickets),
+    fiftyWinners: coerceTickets(d.fiftyWinners),
+    fiftyHistory: coerceHistory(d.fiftyHistory),
+  };
 };
 
 const loadSaved = () => {
@@ -225,8 +238,17 @@ const loadSaved = () => {
 
 // backup code: JSON -> base64. All ticket data is ASCII (see normalize),
 // so plain btoa/atob is safe and keeps the code copy-pasteable anywhere.
-const encodeBackup = (state) =>
-  btoa(JSON.stringify({ tickets: state.tickets, winners: state.winners, history: state.history }));
+const encodeBackup = (s) =>
+  btoa(
+    JSON.stringify({
+      tickets: s.tickets,
+      winners: s.winners,
+      history: s.history,
+      fiftyTickets: s.fiftyTickets,
+      fiftyWinners: s.fiftyWinners,
+      fiftyHistory: s.fiftyHistory,
+    })
+  );
 
 const decodeBackup = (code) => normalizeState(JSON.parse(atob(String(code).trim())));
 
@@ -281,7 +303,7 @@ function ColorPicker({ value, onChange, label }) {
 
 // ---------- ticket stub result ----------
 
-function ResultStub({ result }) {
+function ResultStub({ result, plain, tag }) {
   if (!result) {
     return (
       <div
@@ -293,7 +315,9 @@ function ResultStub({ result }) {
           fontFamily: "'Archivo', sans-serif",
         }}
       >
-        Pick the color being called, type the number, hit Check.
+        {plain
+          ? "Type the called number and hit Check."
+          : "Pick the color being called, type the number, hit Check."}
       </div>
     );
   }
@@ -325,7 +349,7 @@ function ResultStub({ result }) {
             opacity: 0.7,
           }}
         >
-          RAFFLE
+          {tag || "RAFFLE"}
         </span>
       </div>
       <div
@@ -348,15 +372,17 @@ function ResultStub({ result }) {
           {label}
         </div>
         <div className="flex items-center justify-center gap-2 mt-1">
-          <span
-            className="rounded-full inline-block"
-            style={{
-              width: 16,
-              height: 16,
-              background: callColor.bg,
-              border: result.color == null ? "2px dashed #9a917c" : "2px solid rgba(0,0,0,0.25)",
-            }}
-          />
+          {!plain && (
+            <span
+              className="rounded-full inline-block"
+              style={{
+                width: 16,
+                height: 16,
+                background: callColor.bg,
+                border: result.color == null ? "2px dashed #9a917c" : "2px solid rgba(0,0,0,0.25)",
+              }}
+            />
+          )}
           <span
             style={{
               fontFamily: "'Archivo', sans-serif",
@@ -366,7 +392,7 @@ function ResultStub({ result }) {
               fontSize: "28px",
             }}
           >
-            {callColor.name.toUpperCase()} #{result.num}
+            {plain ? "#" + result.num : callColor.name.toUpperCase() + " #" + result.num}
           </span>
         </div>
         <div
@@ -387,7 +413,7 @@ function ResultStub({ result }) {
 
 // ---------- small ticket chip ----------
 
-function TicketChip({ colorId, text, onRemove, extra }) {
+function TicketChip({ colorId, text, onRemove, extra, plain }) {
   const c = colorOf(colorId);
   return (
     <span
@@ -396,7 +422,8 @@ function TicketChip({ colorId, text, onRemove, extra }) {
         paddingRight: onRemove ? 4 : 12,
         background: c.bg,
         color: c.fg,
-        border: colorId == null ? "1px dashed #9a917c" : "1px solid rgba(0,0,0,0.2)",
+        border:
+          !plain && colorId == null ? "1px dashed #9a917c" : "1px solid rgba(0,0,0,0.2)",
         fontFamily: "'Archivo', sans-serif",
         fontWeight: 700,
         fontVariantNumeric: "tabular-nums",
@@ -419,43 +446,26 @@ function TicketChip({ colorId, text, onRemove, extra }) {
   );
 }
 
-// ---------- main app ----------
-
-function RaffleChecker() {
-  const saved = useRef(loadSaved()).current;
-  const [tab, setTab] = useState(saved && saved.tickets.length > 0 ? "check" : "tickets");
-  const [tickets, setTickets] = useState(saved ? saved.tickets : []);
-  const [winners, setWinners] = useState(saved ? saved.winners : []);
-  const [history, setHistory] = useState(saved ? saved.history : []);
-  const [addInput, setAddInput] = useState("");
-  const [addColor, setAddColor] = useState(null);
-  const [addMsg, setAddMsg] = useState(null);
-  const [checkInput, setCheckInput] = useState("");
-  const [checkColor, setCheckColor] = useState(null);
+// ---------- shared ticket-set logic ----------
+// One self-contained draw: tickets you hold, winners, called history, and the
+// last check result. Used for both the main raffle and the 50/50 (which just
+// passes color = null everywhere). Keeps the two draws on one tested code path.
+function useTicketSet(initial) {
+  const [tickets, setTickets] = useState(initial.tickets);
+  const [winners, setWinners] = useState(initial.winners);
+  const [history, setHistory] = useState(initial.history);
   const [result, setResult] = useState(null);
-  const [confirmClear, setConfirmClear] = useState(false);
-  const [backupCode, setBackupCode] = useState("");
-  const [restoreInput, setRestoreInput] = useState("");
-  const [backupMsg, setBackupMsg] = useState(null);
   const checkRef = useRef(null);
 
-  // save on change
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ tickets, winners, history }));
-    } catch (e) {
-      console.error("Save failed", e);
-    }
-  }, [tickets, winners, history]);
-
-  const addTickets = () => {
-    const { nums, errors } = parseTicketInput(addInput);
-    if (nums.length === 0 && errors.length === 0) return;
+  // returns a summary for the caller to turn into a message, or null if nothing parsed
+  const add = (raw, color) => {
+    const { nums, errors } = parseTicketInput(raw);
+    if (nums.length === 0 && errors.length === 0) return null;
     const existing = new Set(tickets.map(keyOf));
     let added = 0;
     const next = tickets.slice();
     for (const n of nums) {
-      const t = { n, c: addColor };
+      const t = { n, c: color };
       if (!existing.has(keyOf(t))) {
         existing.add(keyOf(t));
         next.push(t);
@@ -463,15 +473,7 @@ function RaffleChecker() {
       }
     }
     setTickets(next);
-    setAddInput("");
-    const parts = [];
-    if (added > 0)
-      parts.push(
-        "Added " + added + " " + colorOf(addColor).name.toLowerCase() + " ticket" + (added === 1 ? "" : "s")
-      );
-    if (nums.length - added > 0) parts.push(nums.length - added + " duplicate(s) skipped");
-    if (errors.length > 0) parts.push("Could not read: " + errors.join(", "));
-    setAddMsg(parts.join(". "));
+    return { added, dup: nums.length - added, errors, color };
   };
 
   const removeGroup = (g) => {
@@ -484,17 +486,156 @@ function RaffleChecker() {
     }
   };
 
-  const clearAll = () => {
+  const clear = () => {
     setTickets([]);
     setWinners([]);
     setHistory([]);
     setResult(null);
+  };
+
+  // replace this set's contents (used by backup restore)
+  const load = (s) => {
+    setTickets(s.tickets);
+    setWinners(s.winners);
+    setHistory(s.history);
+    setResult(null);
+  };
+
+  // "No color" on either side matches any color
+  const matchTicket = (num, color) =>
+    tickets.find((t) => t.n === num && (t.c === color || t.c == null || color == null));
+
+  const check = (rawNum, color) => {
+    const n = normalize(rawNum);
+    if (!n) return;
+    const match = matchTicket(n, color);
+    const hit = !!match;
+    const entry = { num: n, color, hit, id: Date.now() };
+    setResult(entry);
+    setHistory((h) => [entry].concat(h).slice(0, 300));
+    if (hit) {
+      setWinners((w) => (w.some((x) => keyOf(x) === keyOf(match)) ? w : [match].concat(w)));
+    }
+    if (checkRef.current) checkRef.current.focus();
+  };
+
+  return { tickets, winners, history, result, checkRef, add, removeGroup, clear, load, check };
+}
+
+// ---------- main app ----------
+
+function RaffleChecker() {
+  const saved = useRef(loadSaved()).current;
+  const [tab, setTab] = useState(saved && saved.tickets.length > 0 ? "check" : "tickets");
+
+  // two independent draws sharing one code path (see useTicketSet)
+  const main = useTicketSet({
+    tickets: saved ? saved.tickets : [],
+    winners: saved ? saved.winners : [],
+    history: saved ? saved.history : [],
+  });
+  const fifty = useTicketSet({
+    tickets: saved ? saved.fiftyTickets : [],
+    winners: saved ? saved.fiftyWinners : [],
+    history: saved ? saved.fiftyHistory : [],
+  });
+  // re-expose the main draw under the names the main-raffle JSX already uses
+  const { tickets, winners, history, result, checkRef } = main;
+
+  const [addInput, setAddInput] = useState("");
+  const [addColor, setAddColor] = useState(null);
+  const [addMsg, setAddMsg] = useState(null);
+  const [checkInput, setCheckInput] = useState("");
+  const [checkColor, setCheckColor] = useState(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [backupCode, setBackupCode] = useState("");
+  const [restoreInput, setRestoreInput] = useState("");
+  const [backupMsg, setBackupMsg] = useState(null);
+
+  // 50/50 tab inputs (plain numbers, no color)
+  const [fiftyAddInput, setFiftyAddInput] = useState("");
+  const [fiftyAddMsg, setFiftyAddMsg] = useState(null);
+  const [fiftyCheckInput, setFiftyCheckInput] = useState("");
+  const [fiftyConfirmClear, setFiftyConfirmClear] = useState(false);
+
+  // save on change (both draws together)
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          tickets,
+          winners,
+          history,
+          fiftyTickets: fifty.tickets,
+          fiftyWinners: fifty.winners,
+          fiftyHistory: fifty.history,
+        })
+      );
+    } catch (e) {
+      console.error("Save failed", e);
+    }
+  }, [tickets, winners, history, fifty.tickets, fifty.winners, fifty.history]);
+
+  const buildAddMsg = (res, withColor) => {
+    const parts = [];
+    if (res.added > 0)
+      parts.push(
+        "Added " +
+          res.added +
+          (withColor ? " " + colorOf(res.color).name.toLowerCase() : "") +
+          " ticket" +
+          (res.added === 1 ? "" : "s")
+      );
+    if (res.dup > 0) parts.push(res.dup + " duplicate(s) skipped");
+    if (res.errors.length > 0) parts.push("Could not read: " + res.errors.join(", "));
+    return parts.join(". ");
+  };
+
+  // ----- main raffle handlers -----
+  const addTickets = () => {
+    const res = main.add(addInput, addColor);
+    if (!res) return;
+    setAddInput("");
+    setAddMsg(buildAddMsg(res, true));
+  };
+  const runCheck = () => {
+    main.check(checkInput, checkColor);
+    setCheckInput("");
+  };
+  const removeGroup = (g) => main.removeGroup(g);
+  const clearAll = () => {
+    main.clear();
     setConfirmClear(false);
+  };
+
+  // ----- 50/50 handlers (color always null) -----
+  const addFifty = () => {
+    const res = fifty.add(fiftyAddInput, null);
+    if (!res) return;
+    setFiftyAddInput("");
+    setFiftyAddMsg(buildAddMsg(res, false));
+  };
+  const runFiftyCheck = () => {
+    fifty.check(fiftyCheckInput, null);
+    setFiftyCheckInput("");
+  };
+  const removeFiftyGroup = (g) => fifty.removeGroup(g);
+  const clearFifty = () => {
+    fifty.clear();
+    setFiftyConfirmClear(false);
   };
 
   // reveal the backup code and try to copy it to the clipboard
   const makeBackup = async () => {
-    const code = encodeBackup({ tickets, winners, history });
+    const code = encodeBackup({
+      tickets,
+      winners,
+      history,
+      fiftyTickets: fifty.tickets,
+      fiftyWinners: fifty.winners,
+      fiftyHistory: fifty.history,
+    });
     setBackupCode(code);
     try {
       await navigator.clipboard.writeText(code);
@@ -508,43 +649,24 @@ function RaffleChecker() {
     if (!restoreInput.trim()) return;
     try {
       const s = decodeBackup(restoreInput);
-      setTickets(s.tickets);
-      setWinners(s.winners);
-      setHistory(s.history);
-      setResult(null);
+      main.load({ tickets: s.tickets, winners: s.winners, history: s.history });
+      fifty.load({ tickets: s.fiftyTickets, winners: s.fiftyWinners, history: s.fiftyHistory });
       setRestoreInput("");
       setBackupMsg(
-        "Restored " + s.tickets.length + " ticket" + (s.tickets.length === 1 ? "" : "s") + "."
+        "Restored " +
+          s.tickets.length +
+          " ticket" +
+          (s.tickets.length === 1 ? "" : "s") +
+          (s.fiftyTickets.length ? " + " + s.fiftyTickets.length + " 50/50" : "") +
+          "."
       );
     } catch (e) {
       setBackupMsg("That code didn't look right — make sure you pasted the whole thing.");
     }
   };
 
-  // "No color" on either side matches any color
-  const matchTicket = (num, color) =>
-    tickets.find(
-      (t) => t.n === num && (t.c === color || t.c == null || color == null)
-    );
-
-  const runCheck = () => {
-    const n = normalize(checkInput);
-    if (!n) return;
-    const match = matchTicket(n, checkColor);
-    const hit = !!match;
-    const entry = { num: n, color: checkColor, hit, id: Date.now() };
-    setResult(entry);
-    setHistory((h) => [entry].concat(h).slice(0, 300));
-    if (hit) {
-      setWinners((w) =>
-        w.some((x) => keyOf(x) === keyOf(match)) ? w : [match].concat(w)
-      );
-    }
-    setCheckInput("");
-    if (checkRef.current) checkRef.current.focus();
-  };
-
   const groups = groupTickets(tickets);
+  const fiftyGroups = groupTickets(fifty.tickets);
   const winCount = winners.length;
 
   const tabBtn = (id, label) => (
@@ -590,6 +712,7 @@ function RaffleChecker() {
           >
             {tickets.length} ticket{tickets.length === 1 ? "" : "s"} loaded
             {winCount > 0 ? " \u00B7 " + winCount + " win" + (winCount === 1 ? "" : "s") : ""}
+            {fifty.tickets.length > 0 ? " \u00B7 " + fifty.tickets.length + " 50/50" : ""}
           </div>
         </div>
 
@@ -597,6 +720,7 @@ function RaffleChecker() {
         <div className="flex gap-2 mb-5">
           {tabBtn("check", "CHECK CALLS")}
           {tabBtn("tickets", "MY TICKETS")}
+          {tabBtn("fifty", "50/50")}
         </div>
 
         {/* ---------- CHECK TAB ---------- */}
@@ -1019,6 +1143,292 @@ function RaffleChecker() {
                 )}
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ---------- 50/50 TAB (separate draw, plain numbers) ---------- */}
+        {tab === "fifty" && (
+          <div>
+            {/* check panel */}
+            <div
+              className="rounded-2xl p-4 mb-4"
+              style={{ background: C.panel, border: "1px solid " + C.panelEdge }}
+            >
+              <label
+                htmlFor="fifty-check-input"
+                className="block"
+                style={{
+                  fontFamily: "'Archivo', sans-serif",
+                  fontWeight: 700,
+                  color: C.muted,
+                  fontSize: "12px",
+                  letterSpacing: "1px",
+                  textTransform: "uppercase",
+                }}
+              >
+                50/50 number being called
+              </label>
+              <input
+                id="fifty-check-input"
+                ref={fifty.checkRef}
+                inputMode="numeric"
+                value={fiftyCheckInput}
+                onChange={(e) => setFiftyCheckInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") runFiftyCheck();
+                }}
+                placeholder="0000"
+                className="w-full mt-2 rounded-xl text-center"
+                style={{
+                  fontFamily: "'Archivo', sans-serif",
+                  fontWeight: 800,
+                  fontVariantNumeric: "tabular-nums",
+                  fontSize: "40px",
+                  padding: "10px",
+                  background: C.bg,
+                  color: C.cream,
+                  border: "1px solid " + C.panelEdge,
+                }}
+              />
+              <button
+                onClick={runFiftyCheck}
+                disabled={fifty.tickets.length === 0}
+                className="w-full mt-3 rounded-xl py-4"
+                style={{
+                  fontFamily: "'Bungee', sans-serif",
+                  fontSize: "16px",
+                  letterSpacing: "1px",
+                  background: fifty.tickets.length === 0 ? C.miss : C.red,
+                  color: fifty.tickets.length === 0 ? C.muted : C.cream,
+                }}
+              >
+                CHECK 50/50
+              </button>
+              {fifty.tickets.length === 0 && (
+                <div
+                  className="text-center mt-2"
+                  style={{ fontFamily: "'Archivo', sans-serif", color: C.muted, fontSize: "13px" }}
+                >
+                  Add your 50/50 tickets below first.
+                </div>
+              )}
+            </div>
+
+            <ResultStub result={fifty.result} plain tag="50/50" />
+
+            {/* 50/50 winners */}
+            {fifty.winners.length > 0 && (
+              <div className="mt-5">
+                <div
+                  style={{
+                    fontFamily: "'Bungee', sans-serif",
+                    color: C.gold,
+                    fontSize: "13px",
+                    letterSpacing: "1px",
+                    marginBottom: "8px",
+                  }}
+                >
+                  YOUR 50/50 WINS
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {fifty.winners.map((w) => (
+                    <span
+                      key={keyOf(w)}
+                      className="rounded-lg px-3 py-1 inline-block"
+                      style={{
+                        background: C.gold,
+                        color: "#231A02",
+                        fontFamily: "'Archivo', sans-serif",
+                        fontWeight: 800,
+                        fontVariantNumeric: "tabular-nums",
+                        fontSize: "15px",
+                      }}
+                    >
+                      #{w.n}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* add 50/50 tickets */}
+            <div
+              className="rounded-2xl p-4 mt-5"
+              style={{ background: C.panel, border: "1px solid " + C.panelEdge }}
+            >
+              <label
+                htmlFor="fifty-add-input"
+                className="block"
+                style={{
+                  fontFamily: "'Archivo', sans-serif",
+                  fontWeight: 700,
+                  color: C.muted,
+                  fontSize: "12px",
+                  letterSpacing: "1px",
+                  textTransform: "uppercase",
+                }}
+              >
+                Add 50/50 ticket numbers
+              </label>
+              <input
+                id="fifty-add-input"
+                value={fiftyAddInput}
+                onChange={(e) => setFiftyAddInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") addFifty();
+                }}
+                placeholder="e.g. 1201-1240, 88, 1203"
+                className="w-full mt-2 rounded-xl"
+                style={{
+                  fontFamily: "'Archivo', sans-serif",
+                  fontWeight: 600,
+                  fontSize: "17px",
+                  padding: "14px",
+                  background: C.bg,
+                  color: C.cream,
+                  border: "1px solid " + C.panelEdge,
+                }}
+              />
+              <div
+                className="mt-2"
+                style={{ fontFamily: "'Archivo', sans-serif", color: C.muted, fontSize: "13px" }}
+              >
+                The 50/50 is its own roll — these stay separate from your main raffle tickets.
+              </div>
+              <button
+                onClick={addFifty}
+                className="w-full mt-3 rounded-xl py-3"
+                style={{
+                  fontFamily: "'Bungee', sans-serif",
+                  fontSize: "14px",
+                  letterSpacing: "1px",
+                  background: C.red,
+                  color: C.cream,
+                }}
+              >
+                ADD 50/50 TICKETS
+              </button>
+              {fiftyAddMsg && (
+                <div
+                  className="mt-2 text-center"
+                  style={{ fontFamily: "'Archivo', sans-serif", color: C.gold, fontSize: "13px" }}
+                >
+                  {fiftyAddMsg}
+                </div>
+              )}
+            </div>
+
+            {/* 50/50 ticket list */}
+            <div className="mt-5">
+              <div className="flex items-center justify-between mb-2">
+                <div
+                  style={{
+                    fontFamily: "'Bungee', sans-serif",
+                    color: C.muted,
+                    fontSize: "13px",
+                    letterSpacing: "1px",
+                  }}
+                >
+                  MY 50/50 TICKETS ({fifty.tickets.length})
+                </div>
+                {fifty.tickets.length > 0 && (
+                  <button
+                    onClick={() => (fiftyConfirmClear ? clearFifty() : setFiftyConfirmClear(true))}
+                    onBlur={() => setFiftyConfirmClear(false)}
+                    className="rounded-lg px-3 py-1"
+                    style={{
+                      fontFamily: "'Archivo', sans-serif",
+                      fontWeight: 700,
+                      fontSize: "12px",
+                      background: fiftyConfirmClear ? C.red : "transparent",
+                      color: fiftyConfirmClear ? C.cream : C.muted,
+                      border: "1px solid " + (fiftyConfirmClear ? C.red : C.panelEdge),
+                    }}
+                  >
+                    {fiftyConfirmClear ? "Tap again to clear 50/50" : "Clear 50/50"}
+                  </button>
+                )}
+              </div>
+
+              {fifty.tickets.length === 0 ? (
+                <div
+                  className="rounded-2xl p-6 text-center"
+                  style={{
+                    background: C.panel,
+                    border: "2px dashed " + C.panelEdge,
+                    color: C.muted,
+                    fontFamily: "'Archivo', sans-serif",
+                  }}
+                >
+                  No 50/50 tickets yet. Add your numbers above and they save on this device.
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {fiftyGroups.map((g, i) => {
+                    const label = g.type === "range" ? g.from + "-" + g.to : "#" + g.value;
+                    const count = g.type === "range" ? g.to - g.from + 1 : 1;
+                    return (
+                      <TicketChip
+                        key={i}
+                        plain
+                        colorId={g.c}
+                        text={label}
+                        extra={count > 1 ? "(" + count + ")" : null}
+                        onRemove={() => removeFiftyGroup(g)}
+                      />
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* 50/50 history */}
+            {fifty.history.length > 0 && (
+              <div className="mt-5">
+                <div
+                  style={{
+                    fontFamily: "'Bungee', sans-serif",
+                    color: C.muted,
+                    fontSize: "13px",
+                    letterSpacing: "1px",
+                    marginBottom: "8px",
+                  }}
+                >
+                  50/50 CALLED SO FAR ({fifty.history.length})
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {fifty.history.slice(0, 40).map((h) => (
+                    <span
+                      key={h.id}
+                      className="rounded-lg px-3 py-1 inline-block"
+                      style={{
+                        background: h.hit ? C.gold : C.panel,
+                        color: h.hit ? "#231A02" : C.muted,
+                        border: "1px solid " + (h.hit ? C.gold : C.panelEdge),
+                        fontFamily: "'Archivo', sans-serif",
+                        fontWeight: 700,
+                        fontVariantNumeric: "tabular-nums",
+                        fontSize: "14px",
+                      }}
+                    >
+                      {h.num}
+                    </span>
+                  ))}
+                  {fifty.history.length > 40 && (
+                    <span
+                      style={{
+                        color: C.muted,
+                        fontFamily: "'Archivo', sans-serif",
+                        fontSize: "13px",
+                        alignSelf: "center",
+                      }}
+                    >
+                      +{fifty.history.length - 40} more
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -7,9 +7,10 @@ A dead-simple web app for raffle night: load the ticket numbers you hold, then c
 - **Add tickets** by single number, comma/space-separated lists, or ranges (e.g. `4501-4550, 88, 1203`).
 - **Roll colors** — tag tickets by color; "No color" acts as a wildcard that matches any called color.
 - **Check calls** — pick the color being called, type the number, and get an instant WINNER / NOT YOURS ticket stub.
+- **50/50** — a separate tab for the 50/50 draw, tracked as its own roll of plain numbers with its own check, winners, and history. It never mixes with your main raffle tickets.
 - **Winners & history** — winning tickets and every number called so far are tracked automatically.
 - **Saves on your device** — tickets persist in the browser's `localStorage`, no sign-in needed.
-- **Backup & restore** — copy a backup code to keep your tickets safe (or move them to another device) and paste it back to restore.
+- **Backup & restore** — copy a backup code to keep your tickets (main raffle and 50/50) safe, or move them to another device, and paste it back to restore.
 
 ## Run it
 
