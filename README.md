@@ -2,7 +2,7 @@
 
 A dead-simple web app for raffle night: load the ticket numbers you hold, then check called numbers against them as they're drawn. The whole app is a single `index.html` — no build step, no dependencies, no account.
 ## Use Here
-[raffle.alexzawadzki.net]
+[raffle.alexzawadzki.net](raffle.alexzawadzki.net)
 
 ## Features
 
